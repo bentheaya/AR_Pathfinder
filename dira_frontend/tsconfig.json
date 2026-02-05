@@ -7,6 +7,9 @@
             "DOM",
             "DOM.Iterable"
         ],
+        "types": [
+            "node"
+        ],
         "module": "ESNext",
         "skipLibCheck": true,
         /* Bundler mode */

@@ -116,5 +116,61 @@ REST_FRAMEWORK = {
         'rest_framework.parsers.JSONParser',
     ],
     'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
-    'PAGE_SIZE': 100
+    'PAGE_SIZE': 100,
+    'DEFAULT_THROTTLE_RATES': {
+        'anon': '100/hour',  # Default for anonymous users
+        'user': '1000/hour',  # Default for authenticated users
+        'burst': '3/sec',  # Burst protection
+    }
+}
+
+# Cache Configuration
+CACHES = {
+    'default': {
+        'BACKEND': 'django_redis.cache.RedisCache',
+        'LOCATION': os.getenv('REDIS_URL', 'redis://127.0.0.1:6379/1'),
+        'OPTIONS': {
+            'CLIENT_CLASS': 'django_redis.client.DefaultClient',
+            'SOCKET_CONNECT_TIMEOUT': 5,
+            'SOCKET_TIMEOUT': 5,
+            'RETRY_ON_TIMEOUT': True,
+            'MAX_CONNECTIONS': 50,
+            'PARSER_CLASS': 'redis.connection.HiredisParser',
+        },
+        'KEY_PREFIX': 'dira',
+        'TIMEOUT': 3600,  # Default 1 hour
+    }
+}
+
+# Session cache (optional - for better performance)
+SESSION_ENGINE = 'django.contrib.sessions.backends.cache'
+SESSION_CACHE_ALIAS = 'default'
+
+# Gemini AI Configuration
+GEMINI_API_KEY = os.getenv('GEMINI_API_KEY', '')
+
+# Navigation Cache Settings
+NAVIGATION_CACHE_TIMEOUT = int(os.getenv('NAVIGATION_CACHE_TIMEOUT', '300'))  # 5 minutes default
+ENABLE_RESULT_CACHING = os.getenv('ENABLE_RESULT_CACHING', 'True') == 'True'
+
+# Logging Configuration
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'handlers': {
+        'console': {
+            'class': 'logging.StreamHandler',
+        },
+    },
+    'root': {
+        'handlers': ['console'],
+        'level': 'INFO',
+    },
+    'loggers': {
+        'navigation': {
+            'handlers': ['console'],
+            'level': 'DEBUG',
+            'propagate': False,
+        },
+    },
 }

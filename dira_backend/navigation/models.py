@@ -3,9 +3,23 @@ from django.contrib.auth.models import User
 
 class Waypoint(models.Model):
     """Represents a geographical waypoint/landmark"""
+    
+    CATEGORY_CHOICES = [
+        ('institution', 'Institution'),
+        ('nature', 'Nature'),
+        ('business', 'Business'),
+        ('government', 'Government'),
+        ('transport', 'Transport'),
+        ('landmark', 'Landmark'),
+        ('city', 'City'),
+        ('other', 'Other'),
+    ]
+    
     name = models.CharField(max_length=255)
     description = models.TextField(blank=True)
+    category = models.CharField(max_length=20, choices=CATEGORY_CHOICES, default='other')
     location = models.PointField()  # PostGIS Point field for lat/lon
+    altitude = models.FloatField(default=0.0, help_text="Altitude in meters above sea level")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     

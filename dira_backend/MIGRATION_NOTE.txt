@@ -1,0 +1,6 @@
+"""
+Generate migration for altitude field addition to Waypoint model.
+Run this migration after adding the altitude field.
+"""
+# Run: python manage.py makemigrations
+# Then: python manage.py migrate

@@ -10,15 +10,19 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@react-three/drei": "^9.122.0",
+    "@react-three/fiber": "^8.15.0",
+    "idb": "^8.0.3",
+    "latlon-geohash": "^2.0.0",
+    "lucide-react": "^0.300.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
-    "@react-three/fiber": "^8.15.0",
-    "@react-three/drei": "^9.92.0",
     "three": "^0.160.0",
-    "lucide-react": "^0.300.0"
+    "zustand": "^5.0.11"
   },
   "devDependencies": {
     "@eslint/js": "^9.17.0",
+    "@types/node": "^25.2.0",
     "@types/react": "^18.2.43",
     "@types/react-dom": "^18.2.17",
     "@types/three": "^0.160.0",

@@ -50,4 +50,5 @@ class AnalyzeFrameResponseSerializer(serializers.Serializer):
     instructions = NavigationInstructionSerializer(many=True)
     confidence = serializers.FloatField()
     landmarks = serializers.ListField(child=serializers.CharField())
+    thought_signature = serializers.CharField(required=False, allow_null=True)
     session_id = serializers.IntegerField(required=False)
