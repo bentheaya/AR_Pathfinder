@@ -111,7 +111,7 @@ Example: {{"instruction": "Turn right towards the yellow cafe building", "bearin
                 ),
                 # LOW resolution to save tokens during active walking
                 # Upgrade to MEDIUM if landmark detection is poor
-                media_resolution=types.MediaResolution.LOW,
+                media_resolution='MEDIA_RESOLUTION_LOW',
                 response_mime_type='application/json',
                 temperature=0.3,  # Lower temperature for consistent navigation
                 response_modalities=['TEXT']
@@ -359,7 +359,7 @@ Example: {{"horizon_line_y_percent": 45, "skyline_features": [{{"type": "mountai
                 thinking_config=types.ThinkingConfig(
                     thinking_level=types.ThinkingLevel.MEDIUM  # Higher quality for landscape analysis
                 ),
-                media_resolution=types.MediaResolution.MEDIUM,  # Better for skyline detection
+                media_resolution='MEDIA_RESOLUTION_MEDIUM',  # Better for skyline detection
                 response_mime_type='application/json',
                 temperature=0.4,
                 response_modalities=['TEXT']

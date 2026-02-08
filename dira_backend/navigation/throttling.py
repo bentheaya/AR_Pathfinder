@@ -39,5 +39,5 @@ class BurstAnalyzeFrameThrottle(AnonRateThrottle):
     Allows quick bursts but prevents sustained spam.
     """
     scope = 'burst'
-    # 3 requests per second (allows quick adjustments while walking)
-    rate = '3/sec'
+    # 10 requests per second (development setting - adjust for production)
+    rate = '10/sec'

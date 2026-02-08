@@ -68,7 +68,7 @@ export default function HorizonMode({
                 params.append('category', selectedCategory);
             }
 
-            const response = await fetch(`${apiBaseUrl}/api/v1/waypoints/nearby/?${params}`);
+            const response = await fetch(`${apiBaseUrl}/waypoints/nearby/?${params}`);
 
             if (!response.ok) {
                 throw new Error(`Failed to fetch POIs: ${response.statusText}`);
