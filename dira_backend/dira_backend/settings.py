@@ -78,6 +78,7 @@ DATABASES = {
     }
 }
 
+
 # Password validation
 AUTH_PASSWORD_VALIDATORS = [
     {'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator'},
@@ -100,6 +101,8 @@ STATIC_ROOT = BASE_DIR / 'staticfiles'
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 # CORS settings
+CORS_ALLOW_ALL_ORIGINS = True
+
 CORS_ALLOWED_ORIGIN_REGEXES = [
     r"^https://localhost:5173$",
     r"^https://127.0.0.1:5173$",
@@ -129,19 +132,26 @@ REST_FRAMEWORK = {
 CACHES = {
     'default': {
         'BACKEND': 'django_redis.cache.RedisCache',
-        'LOCATION': os.getenv('REDIS_URL', 'redis://127.0.0.1:6379/1'),
+        # Fallback removed to ensure it uses the cloud Redis URL
+        'LOCATION': os.getenv('REDIS_URL'),
         'OPTIONS': {
             'CLIENT_CLASS': 'django_redis.client.DefaultClient',
+            # Required for rediss:// connections to skip local cert verification
+            'CONNECTION_POOL_KWARGS': {
+                'ssl_cert_reqs': None,
+                'max_connections': 50,
+                'retry_on_timeout': True,
+            },
             'SOCKET_CONNECT_TIMEOUT': 5,
             'SOCKET_TIMEOUT': 5,
-            'RETRY_ON_TIMEOUT': True,
-            'MAX_CONNECTIONS': 50,
-            'PARSER_CLASS': 'redis.connection.HiredisParser',
+            # Hiredis parser is automatic if the package is installed
+            'PARSER_CLASS': 'redis.connection._HiredisParser',
         },
         'KEY_PREFIX': 'dira',
-        'TIMEOUT': 3600,  # Default 1 hour
+        'TIMEOUT': 3600,
     }
 }
+
 
 # Session cache (optional - for better performance)
 SESSION_ENGINE = 'django.contrib.sessions.backends.cache'

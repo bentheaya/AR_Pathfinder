@@ -106,7 +106,7 @@ class WaypointViewSet(viewsets.ReadOnlyModelViewSet):
 
 
 @api_view(['POST'])
-@throttle_classes([BurstAnalyzeFrameThrottle, AnalyzeFrameAnonThrottle])
+@throttle_classes([AnalyzeFrameAnonThrottle])
 def analyze_frame(request):
     """
     AI-Powered Frame Analysis using Gemini 3.
@@ -162,9 +162,12 @@ def analyze_frame(request):
             return Response(cached_result, status=status.HTTP_200_OK)
     
     # Find nearby waypoints using PostGIS spatial query
+    # FIX: Use annotate with Distance function to calculate 'distance' field
     nearby_waypoints = Waypoint.objects.filter(
         location__distance_lte=(location, D(m=500))
-    ).distance(location).order_by('distance')[:5]
+    ).annotate(
+        distance=Distance('location', location)
+    ).order_by('distance')[:5]
     
     landmarks = [wp.name for wp in nearby_waypoints]
     
@@ -252,7 +255,7 @@ def analyze_frame(request):
 
 
 @api_view(['POST'])
-@throttle_classes([BurstAnalyzeFrameThrottle, AnalyzeFrameAnonThrottle])
+@throttle_classes([AnalyzeFrameAnonThrottle])
 def analyze_horizon(request):
     """
     Gemini 3 Semantic Horizon Analysis for POI positioning refinement.
@@ -392,16 +395,13 @@ def get_metrics(request):
 
 
 # === Helper Functions ===
-
 def get_enhanced_fallback_instructions(location, heading, nearby_waypoints, destination_name=None):
-    """
-    IMPROVED fallback geometric navigation with better UX.
-    Uses multiple waypoints and provides more context.
-    """
+    """IMPROVED fallback geometric navigation with better UX."""
     if nearby_waypoints.exists():
         nearest = nearby_waypoints[0]
+        # FIX: Calculate distance properly from the annotated field or manually
         distance_to_nearest = location.distance(nearest.location) * 111000
-        
+                
         bearing = calculate_bearing(
             location.y, location.x,
             nearest.location.y, nearest.location.x
