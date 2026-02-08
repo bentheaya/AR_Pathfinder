@@ -1,10 +1,12 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
+import basicSsl from '@vitejs/plugin-basic-ssl'
 
 // https://vitejs.dev/config/
 export default defineConfig({
   plugins: [
+    basicSsl(),
     react(),
     VitePWA({
       registerType: 'autoUpdate',
@@ -52,6 +54,12 @@ export default defineConfig({
   ],
   server: {
     port: 5173,
+    host: '0.0.0.0', // Listen on all network interfaces
+    hmr: {
+      protocol: 'wss', // Use secure WebSocket
+      host: '192.168.1.204', // Your network IP
+      port: 5173
+    },
     proxy: {
       '/api': {
         target: 'http://localhost:8000',

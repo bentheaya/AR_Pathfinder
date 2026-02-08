@@ -197,10 +197,12 @@ export default function HorizonMode({
 
     // Fetch POIs when location or category changes
     useEffect(() => {
-        if (latitude && longitude) {
+        // Only fetch if we have valid coordinates (non-zero)
+        if (latitude && longitude && (latitude !== 0 || longitude !== 0)) {
             fetchPOIs();
         }
-    }, [fetchPOIs, latitude, longitude]);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [latitude, longitude]);
 
     // 🚀 PERFORMANCE: Continuous throttled analysis
     // Only triggers when heading changes >15° and >10s since last analysis
@@ -226,8 +228,8 @@ export default function HorizonMode({
             <video ref={videoRef} autoPlay playsInline muted className="hidden" />
             <canvas ref={canvasRef} className="hidden" />
 
-            {/* Category Filter Bar */}
-            <div className="absolute top-4 left-0 right-0 z-20 px-4">
+            {/* Category Filter Bar - Moved down to avoid overlapping with top Status/Debug icons */}
+            <div className="absolute top-24 left-0 right-0 z-20 px-4">
                 <div className="glass-dark rounded-2xl p-3 max-w-4xl mx-auto">
                     <div className="flex items-center gap-2 mb-2">
                         <Filter className="w-4 h-4 text-dira-primary" />
@@ -261,8 +263,8 @@ export default function HorizonMode({
                 </div>
             </div>
 
-            {/* POI Counter & Scan Indicator */}
-            <div className="absolute top-32 left-0 right-0 z-20 px-4">
+            {/* POI Counter & Scan Indicator - Positioned below category filter */}
+            <div className="absolute top-48 left-0 right-0 z-20 px-4">
                 <div className="glass-dark rounded-xl p-3 max-w-md mx-auto">
                     <div className="flex items-center justify-between">
                         <div className="flex items-center gap-2">

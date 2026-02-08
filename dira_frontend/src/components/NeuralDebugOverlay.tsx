@@ -11,7 +11,8 @@ import {
     Terminal,
     Wifi,
     WifiOff,
-    X
+    X,
+    Sun
 } from 'lucide-react';
 import { useDebugStore, LogEntry } from '../stores/debugStore';
 
@@ -94,7 +95,25 @@ export default function NeuralDebugOverlay() {
                             className="col-span-2"
                         />
                     </div>
-                </section >
+                </section>
+
+                {/* Adaptive Mode */}
+                <section>
+                    <div className="flex items-center gap-2 mb-2 text-green-400/70 border-b border-green-500/20 pb-1">
+                        <Sun className="w-3 h-3" />
+                        <span className="font-bold uppercase">Adaptive Mode</span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2 text-[10px]">
+                        <StatRow label="Environment" value={store.environmentMode} />
+                        <StatRow label="Solar Phase" value={store.solarPhase} />
+                        <StatRow label="Ambient" value={`${store.ambientLux} lux`} />
+                        <StatRow label="Network" value={store.networkSpeed} />
+                        <StatRow label="Interval" value={`${store.frameIntervalMs}ms`} className="text-amber-400" />
+                        {store.bandwidthSavings > 0 && (
+                            <StatRow label="Savings" value={`-${store.bandwidthSavings.toFixed(0)}%`} className="text-green-400 font-bold" />
+                        )}
+                    </div>
+                </section>
 
                 {/* Manual Overrides */}
                 < section >

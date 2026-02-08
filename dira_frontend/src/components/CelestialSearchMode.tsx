@@ -58,6 +58,12 @@ export default function CelestialSearchMode({
         setGuidanceText('Searching...');
 
         try {
+            // Prevent search with invalid coordinates
+            if (!latitude && !longitude) {
+                console.warn('Waiting for GPS lock...');
+                return;
+            }
+
             const response = await fetch(
                 `${apiBaseUrl}/navigation/search-celestial/?q=${encodeURIComponent(query)}&lat=${latitude}&lon=${longitude}&alt=${altitude}`
             );

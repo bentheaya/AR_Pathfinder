@@ -26,6 +26,7 @@
     "@types/react": "^18.2.43",
     "@types/react-dom": "^18.2.17",
     "@types/three": "^0.160.0",
+    "@vitejs/plugin-basic-ssl": "^2.1.4",
     "@vitejs/plugin-react": "^4.2.1",
     "autoprefixer": "^10.4.16",
     "eslint": "^9.17.0",
@@ -38,6 +39,7 @@
     "typescript-eslint": "^8.19.1",
     "vite": "^6.0.11",
     "vite-plugin-pwa": "^0.21.1",
+    "vitest": "^4.0.18",
     "workbox-window": "^7.0.0"
   }
 }

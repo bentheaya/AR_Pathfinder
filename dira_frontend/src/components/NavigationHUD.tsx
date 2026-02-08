@@ -13,6 +13,8 @@ import HorizonMode from './HorizonMode';
 
 import NeuralDebugOverlay from './NeuralDebugOverlay'; // Import Overlay
 import { useDebugStore } from '../stores/debugStore'; // Import Store
+import { detectEnvironment, getAdaptiveConfig, formatEnvironmentMode } from '../utils/adaptiveMode';
+import { calculateSolarPhase } from '../utils/solarCalc';
 
 interface Arrow3DProps {
     direction: 'forward' | 'left' | 'right' | 'turn-around';
@@ -139,6 +141,7 @@ export default function NavigationHUD({
     const updateImageStats = useDebugStore(state => state.updateImageStats);
     const setPostGisQueryTime = useDebugStore(state => state.setPostGisQueryTime);
     const addLog = useDebugStore(state => state.addLog);
+    const updateAdaptiveStats = useDebugStore(state => state.updateAdaptiveStats);
     const showAnchors = useDebugStore(state => state.showAnchors);
     const isFrozen = useDebugStore(state => state.isFrozen);
 
@@ -152,6 +155,12 @@ export default function NavigationHUD({
 
     // Mode state: navigation or horizon
     const [mode, setMode] = useState<'navigation' | 'horizon'>('navigation');
+    const userModeOverrideRef = useRef<{ mode: typeof mode, timestamp: number } | null>(null); // Track manual overrides
+
+    // Adaptive mode state
+    const [ambientLight, setAmbientLight] = useState<number | undefined>();
+    const [networkSpeed, setNetworkSpeed] = useState<string>('Unknown');
+    const [frameInterval, setFrameInterval] = useState<number>(3000); // Dynamic interval
 
     // Navigation state
     const [currentInstruction, setCurrentInstruction] = useState<NavigationInstruction>({
@@ -167,6 +176,7 @@ export default function NavigationHUD({
     const [isProcessing, setIsProcessing] = useState(false);
     const [isOnline, setIsOnline] = useState(true);
     const [fromCache, setFromCache] = useState(false);
+    const [lastKnownInstruction, setLastKnownInstruction] = useState<NavigationInstruction | null>(null);
 
     // Frame analysis interval
     const analysisIntervalRef = useRef<NodeJS.Timeout | null>(null);
@@ -255,7 +265,7 @@ export default function NavigationHUD({
             addLog('SYSTEM', `Sending frame to Gemini(${(compressedSize / 1024).toFixed(1)}KB)`, 'info');
 
             // Call backend API
-            const response = await fetch(`${apiBaseUrl} /api/v1 / analyze - frame / `, {
+            const response = await fetch(`${apiBaseUrl}/analyze-frame/`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -289,7 +299,8 @@ export default function NavigationHUD({
             // Update UI with navigation data
             if (data.instructions && data.instructions.length > 0) {
                 setCurrentInstruction(data.instructions[0]);
-                addLog('GEMINI', `Instruction: ${data.instructions[0].message} `, 'info');
+                setLastKnownInstruction(data.instructions[0]); // Save for GPS-only fallback
+                addLog('GEMINI', `Instruction: ${data.instructions[0].message}`, 'info');
             }
 
             setLandmarks(data.landmarks || []);
@@ -303,13 +314,23 @@ export default function NavigationHUD({
 
         } catch (error) {
             console.error('Frame analysis error:', error);
-            addLog('SYSTEM', `Analysis failed: ${error} `, 'error');
+            addLog('SYSTEM', `Connection lost - using GPS-only mode`, 'error');
             setIsOnline(false);
-            setCurrentInstruction({
-                direction: 'forward',
-                distance: 0,
-                message: 'Navigation offline - check connection'
-            });
+
+            // GPS-Only Fallback: Use last known instruction + compass
+            if (lastKnownInstruction) {
+                setCurrentInstruction({
+                    ...lastKnownInstruction,
+                    message: `${lastKnownInstruction.message} (GPS-only)`
+                });
+                addLog('SYSTEM', 'Continuing with last instruction + GPS', 'warning');
+            } else {
+                setCurrentInstruction({
+                    direction: 'forward',
+                    distance: 0,
+                    message: 'Navigation offline - check connection'
+                });
+            }
         } finally {
             setIsProcessing(false);
         }
@@ -388,14 +409,94 @@ export default function NavigationHUD({
         }
     }, [location, heading, updateSensorData]);
 
-
-    // === START FRAME ANALYSIS LOOP ===
+    // === AMBIENT LIGHT SENSOR ===
     useEffect(() => {
-        if (location && videoStream && !isFrozen) { // Check isFrozen
-            // Analyze frame every 3 seconds
+        if ('AmbientLightSensor' in window) {
+            try {
+                const sensor = new (window as any).AmbientLightSensor();
+                sensor.addEventListener('reading', () => {
+                    setAmbientLight(sensor.illuminance);
+                });
+                sensor.start();
+                addLog('SYSTEM', 'Ambient light sensor activated', 'info');
+
+                return () => sensor.stop();
+            } catch (e) {
+                addLog('SYSTEM', 'Ambient light sensor unavailable - using solar only', 'warning');
+            }
+        }
+    }, [addLog]);
+
+    // === NETWORK QUALITY DETECTION ===
+    useEffect(() => {
+        const connection = (navigator as any).connection;
+        if (connection) {
+            const updateNetworkSpeed = () => {
+                setNetworkSpeed(connection.effectiveType || 'Unknown');
+            };
+
+            updateNetworkSpeed();
+            connection.addEventListener('change', updateNetworkSpeed);
+
+            return () => connection.removeEventListener('change', updateNetworkSpeed);
+        }
+    }, []);
+
+    // === ADAPTIVE MODE LOGIC ===
+    useEffect(() => {
+        if (location) {
+            const now = new Date();
+            const solarPhase = calculateSolarPhase(location.lat, location.lon, now);
+            const envMode = detectEnvironment(location.lat, location.lon, now, ambientLight);
+            const config = getAdaptiveConfig(envMode, networkSpeed as any);
+
+            // Update debug stats
+            updateAdaptiveStats({
+                environmentMode: formatEnvironmentMode(envMode),
+                solarPhase,
+                ambientLux: ambientLight || 0,
+                networkSpeed,
+                frameIntervalMs: config.frameInterval,
+                bandwidthSavings: config.bandwidthSavings
+            });
+
+            // Update frame interval
+            setFrameInterval(config.frameInterval);
+
+            // Auto-switch mode (with 10-min user override protection)
+            if (config.forceMode && config.suggestedMode !== mode) {
+                const tenMinutesAgo = Date.now() - 10 * 60 * 1000;
+                const hasRecentOverride = userModeOverrideRef.current &&
+                    userModeOverrideRef.current.timestamp > tenMinutesAgo;
+
+                if (!hasRecentOverride) {
+                    setMode(config.suggestedMode as any);
+                    addLog('SYSTEM', `Auto-switched to ${config.suggestedMode} mode: ${config.reason}`, 'warning');
+                }
+            }
+
+            // Log adaptive behavior
+            if (config.bandwidthSavings > 0) {
+                addLog('SYSTEM', `Adaptive mode: ${config.frameInterval}ms interval (-${config.bandwidthSavings}% bandwidth)`, 'info');
+            }
+        }
+    }, [location, ambientLight, networkSpeed, mode, addLog, updateAdaptiveStats]);
+
+    // Track manual mode changes
+    const handleModeChange = useCallback((newMode: typeof mode) => {
+        setMode(newMode);
+        userModeOverrideRef.current = { mode: newMode, timestamp: Date.now() };
+        addLog('USER', `Manual mode switch: ${newMode}`, 'info');
+    }, [addLog]);
+
+
+    // === START FRAME ANALYSIS LOOP (ADAPTIVE) ===
+    useEffect(() => {
+        if (location && videoStream && !isFrozen) {
+            // Adaptive frame analysis interval
             analysisIntervalRef.current = setInterval(() => {
                 captureAndAnalyzeFrame();
-            }, 3000);
+            }, frameInterval); // Dynamic interval based on environment!
 
             // Initial analysis
             setTimeout(() => captureAndAnalyzeFrame(), 1000);
@@ -406,7 +507,7 @@ export default function NavigationHUD({
                 clearInterval(analysisIntervalRef.current);
             }
         };
-    }, [location, videoStream, captureAndAnalyzeFrame, isFrozen]); // Add isFrozen dependency
+    }, [location, videoStream, captureAndAnalyzeFrame, isFrozen, frameInterval]); // Add frameInterval dependency
 
     return (
         <div className="relative w-full h-full overflow-hidden">
@@ -441,7 +542,7 @@ export default function NavigationHUD({
             {/* Mode Toggle Button */}
             <div className="absolute top-4 right-4 z-30">
                 <button
-                    onClick={() => setMode(mode === 'navigation' ? 'horizon' : 'navigation')}
+                    onClick={() => handleModeChange(mode === 'navigation' ? 'horizon' : 'navigation')}
                     className="glass-dark p-3 rounded-xl hover:bg-white/20 transition-all"
                 >
                     {mode === 'navigation' ? (
@@ -450,6 +551,13 @@ export default function NavigationHUD({
                         <ArrowBigUp className="w-6 h-6 text-dira-primary" />
                     )}
                 </button>
+
+                {/* Mode Indicator Badge */}
+                <div className="mt-2 glass-dark px-3 py-1 rounded-lg text-center">
+                    <p className="text-xs text-dira-primary font-semibold uppercase tracking-wide">
+                        {mode === 'navigation' ? '🧭 Navigation' : '🌍 Horizon'}
+                    </p>
+                </div>
             </div>
 
             {/* Conditional Rendering based on mode */}
@@ -487,55 +595,57 @@ export default function NavigationHUD({
                 </>
             )}
 
-            {/* HUD Information - Glassmorphic overlay */}
-            <div className="absolute top-0 left-0 right-0 p-6 z-10 pointer-events-none">
-                {/* Container for centering, pointer-events-auto for interactions if needed */}
-                <div className="glass-dark rounded-2xl p-4 max-w-md mx-auto mt-12 pointer-events-auto">
-                    <div className="flex items-center gap-3">
-                        <div className="bg-dira-primary/20 p-2 rounded-lg">
-                            <ArrowBigUp className="w-6 h-6 text-dira-primary" />
-                        </div>
-                        <div className="flex-1">
-                            <p className="text-sm text-gray-300">Next instruction</p>
-                            <p className="text-lg font-semibold text-white">{currentInstruction.message}</p>
-                        </div>
-                        <div className="text-right">
-                            <p className="text-2xl font-bold text-dira-primary">
-                                {currentInstruction.distance > 0 ? `${currentInstruction.distance} m` : '---'}
-                            </p>
-                        </div>
-                    </div>
-
-                    {/* AI Status Indicator */}
-                    <div className="flex items-center gap-2 mt-3 pt-3 border-t border-white/10">
-                        <div className="flex items-center gap-1 text-xs">
-                            {isOnline ? (
-                                <Wifi className="w-4 h-4 text-green-400" />
-                            ) : (
-                                <WifiOff className="w-4 h-4 text-red-400" />
-                            )}
-                            <span className="text-gray-400">
-                                {isOnline ? 'Online' : 'Offline'}
-                            </span>
-                        </div>
-
-                        {thoughtSignatureRef.current && (
-                            <div className="flex items-center gap-1 text-xs">
-                                <Brain className="w-4 h-4 text-purple-400" />
-                                <span className="text-gray-400">Context Active</span>
+            {/* HUD Information - Glassmorphic overlay (Only in Navigation Mode) */}
+            {mode === 'navigation' && (
+                <div className="absolute top-0 left-0 right-0 p-6 z-10 pointer-events-none">
+                    {/* Container for centering, pointer-events-auto for interactions if needed */}
+                    <div className="glass-dark rounded-2xl p-4 max-w-md mx-auto mt-12 pointer-events-auto">
+                        <div className="flex items-center gap-3">
+                            <div className="bg-dira-primary/20 p-2 rounded-lg">
+                                <ArrowBigUp className="w-6 h-6 text-dira-primary" />
                             </div>
-                        )}
+                            <div className="flex-1">
+                                <p className="text-sm text-gray-300">Next instruction</p>
+                                <p className="text-lg font-semibold text-white">{currentInstruction.message}</p>
+                            </div>
+                            <div className="text-right">
+                                <p className="text-2xl font-bold text-dira-primary">
+                                    {currentInstruction.distance > 0 ? `${currentInstruction.distance} m` : '---'}
+                                </p>
+                            </div>
+                        </div>
 
-                        {fromCache && (
-                            <span className="text-xs text-yellow-400">Cached</span>
-                        )}
+                        {/* AI Status Indicator */}
+                        <div className="flex items-center gap-2 mt-3 pt-3 border-t border-white/10">
+                            <div className="flex items-center gap-1 text-xs">
+                                {isOnline ? (
+                                    <Wifi className="w-4 h-4 text-green-400" />
+                                ) : (
+                                    <WifiOff className="w-4 h-4 text-red-400" />
+                                )}
+                                <span className="text-gray-400">
+                                    {isOnline ? 'Online' : 'Offline'}
+                                </span>
+                            </div>
 
-                        <div className="ml-auto text-xs text-gray-400">
-                            {(confidence * 100).toFixed(0)}% confident
+                            {thoughtSignatureRef.current && (
+                                <div className="flex items-center gap-1 text-xs">
+                                    <Brain className="w-4 h-4 text-purple-400" />
+                                    <span className="text-gray-400">Context Active</span>
+                                </div>
+                            )}
+
+                            {fromCache && (
+                                <span className="text-xs text-yellow-400">Cached</span>
+                            )}
+
+                            <div className="ml-auto text-xs text-gray-400">
+                                {(confidence * 100).toFixed(0)}% confident
+                            </div>
                         </div>
                     </div>
                 </div>
-            </div>
+            )}
 
             {/* Landmarks Display */}
             {landmarks.length > 0 && showAnchors && (

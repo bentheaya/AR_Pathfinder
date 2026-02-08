@@ -51,11 +51,27 @@ interface DebugState {
     // Logging
     thoughtLog: LogEntry[];
 
+    // Adaptive Mode Stats
+    environmentMode: string;
+    solarPhase: string;
+    ambientLux: number;
+    networkSpeed: string;
+    frameIntervalMs: number;
+    bandwidthSavings: number;
+
     // Actions
     updateSensorData: (data: Partial<SensorData>) => void;
     updateGeminiStats: (data: Partial<GeminiStats>) => void;
     updateImageStats: (data: Partial<ImageStats>) => void;
     setPostGisQueryTime: (time: number) => void;
+    updateAdaptiveStats: (stats: Partial<{
+        environmentMode: string;
+        solarPhase: string;
+        ambientLux: number;
+        networkSpeed: string;
+        frameIntervalMs: number;
+        bandwidthSavings: number;
+    }>) => void;
     addLog: (source: LogEntry['source'], message: string, type?: LogEntry['type']) => void;
     clearLogs: () => void;
 }
@@ -100,6 +116,14 @@ export const useDebugStore = create<DebugState>((set) => ({
 
     thoughtLog: [],
 
+    // Adaptive Mode Defaults
+    environmentMode: 'Detecting...',
+    solarPhase: 'Calculating...',
+    ambientLux: 0,
+    networkSpeed: 'Unknown',
+    frameIntervalMs: 3000,
+    bandwidthSavings: 0,
+
     // Actions
     updateSensorData: (data) => set((state) => ({
         sensorData: { ...state.sensorData, ...data }
@@ -114,6 +138,15 @@ export const useDebugStore = create<DebugState>((set) => ({
     })),
 
     setPostGisQueryTime: (time) => set({ postGisQueryTime: time }),
+
+    updateAdaptiveStats: (stats) => set((state) => ({
+        environmentMode: stats.environmentMode ?? state.environmentMode,
+        solarPhase: stats.solarPhase ?? state.solarPhase,
+        ambientLux: stats.ambientLux ?? state.ambientLux,
+        networkSpeed: stats.networkSpeed ?? state.networkSpeed,
+        frameIntervalMs: stats.frameIntervalMs ?? state.frameIntervalMs,
+        bandwidthSavings: stats.bandwidthSavings ?? state.bandwidthSavings,
+    })),
 
     addLog: (source, message, type = 'info') => set((state) => {
         const newEntry: LogEntry = {

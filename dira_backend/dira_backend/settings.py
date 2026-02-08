@@ -18,7 +18,7 @@ SECRET_KEY = os.getenv('SECRET_KEY', 'django-insecure-change-this-in-production-
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = os.getenv('DEBUG', 'True') == 'True'
 
-ALLOWED_HOSTS = os.getenv('ALLOWED_HOSTS', 'localhost,127.0.0.1').split(',')
+ALLOWED_HOSTS = ['*'] # Allow all for local network testing
 
 # Application definition
 INSTALLED_APPS = [
@@ -100,10 +100,11 @@ STATIC_ROOT = BASE_DIR / 'staticfiles'
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 # CORS settings
-CORS_ALLOWED_ORIGINS = os.getenv(
-    'CORS_ALLOWED_ORIGINS',
-    'http://localhost:5173,http://127.0.0.1:5173'
-).split(',')
+CORS_ALLOWED_ORIGIN_REGEXES = [
+    r"^https://localhost:5173$",
+    r"^https://127.0.0.1:5173$",
+    r"^https://192\.168\.\d{1,3}\.\d{1,3}:5173$",  # Allow local network range
+]
 
 CORS_ALLOW_CREDENTIALS = True
 
