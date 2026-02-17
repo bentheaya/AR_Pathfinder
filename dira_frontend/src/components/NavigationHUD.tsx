@@ -1,12 +1,14 @@
 
-import React, { useRef, useState, useEffect, useCallback } from 'react';
+import { useRef, useState, useEffect, useCallback } from 'react';
 import { Canvas, useFrame } from '@react-three/fiber';
 import {
     ArrowBigUp,
     Wifi,
     WifiOff,
     Brain,
-    Scan
+    Scan,
+    AlertCircle,
+    RotateCw
 } from 'lucide-react';
 import * as THREE from 'three';
 import HorizonMode from './HorizonMode';
@@ -15,6 +17,15 @@ import NeuralDebugOverlay from './NeuralDebugOverlay'; // Import Overlay
 import { useDebugStore } from '../stores/debugStore'; // Import Store
 import { detectEnvironment, getAdaptiveConfig, formatEnvironmentMode } from '../utils/adaptiveMode';
 import { calculateSolarPhase } from '../utils/solarCalc';
+import {
+    getCompassHeading,
+    calculateGPSHeading,
+    assessCompassQuality,
+    HeadingSmoothing,
+    getCardinalDirection,
+    type CompassQuality,
+    type GPSPosition
+} from '../utils/compassUtils';
 
 interface Arrow3DProps {
     direction: 'forward' | 'left' | 'right' | 'turn-around';
@@ -152,6 +163,17 @@ export default function NavigationHUD({
     // Location and sensor state
     const [location, setLocation] = useState<{ lat: number; lon: number } | null>(null);
     const [heading, setHeading] = useState<number>(0);
+    
+    // Compass quality state
+    const [compassQuality, setCompassQuality] = useState<CompassQuality>('unavailable');
+    const [needsCalibration, setNeedsCalibration] = useState(false);
+    const [compassMessage, setCompassMessage] = useState('Initializing compass...');
+    const [showCalibration, setShowCalibration] = useState(false);
+    
+    // GPS-based heading fallback
+    const previousGPSPosition = useRef<GPSPosition | null>(null);
+    const headingSmoother = useRef(new HeadingSmoothing(0.3));
+    const lastCompassUpdate = useRef<number>(Date.now());
 
     // Mode state: navigation or horizon
     const [mode, setMode] = useState<'navigation' | 'horizon'>('navigation');
@@ -371,10 +393,30 @@ export default function NavigationHUD({
         if ('geolocation' in navigator) {
             const watchId = navigator.geolocation.watchPosition(
                 (position) => {
-                    setLocation({
+                    const newLocation = {
                         lat: position.coords.latitude,
                         lon: position.coords.longitude
-                    });
+                    };
+                    setLocation(newLocation);
+                    
+                    // Store GPS position with timestamp for heading calculation
+                    const gpsPosition: GPSPosition = {
+                        latitude: position.coords.latitude,
+                        longitude: position.coords.longitude,
+                        timestamp: Date.now()
+                    };
+                    
+                    // Try to calculate GPS-based heading if compass is unavailable
+                    if (previousGPSPosition.current && compassQuality === 'unavailable') {
+                        const gpsHeading = calculateGPSHeading(previousGPSPosition.current, gpsPosition);
+                        if (gpsHeading) {
+                            const smoothed = headingSmoother.current.smooth(gpsHeading.heading);
+                            setHeading(smoothed);
+                            setCompassMessage('Using GPS movement for direction');
+                        }
+                    }
+                    
+                    previousGPSPosition.current = gpsPosition;
                 },
                 (error) => console.error('GPS Error:', error),
                 { enableHighAccuracy: true, maximumAge: 1000 }
@@ -382,19 +424,58 @@ export default function NavigationHUD({
 
             return () => navigator.geolocation.clearWatch(watchId);
         }
-    }, []);
+    }, [compassQuality]);
 
     // === GET COMPASS HEADING ===
     useEffect(() => {
         const handleOrientation = (event: DeviceOrientationEvent) => {
-            if (event.alpha !== null) {
-                setHeading(event.alpha);
+            const compassData = getCompassHeading(event);
+            
+            if (compassData) {
+                // Apply smoothing to reduce jitter
+                const smoothed = headingSmoother.current.smooth(compassData.heading);
+                setHeading(smoothed);
+                lastCompassUpdate.current = Date.now();
+                
+                // Assess compass quality
+                const quality = assessCompassQuality(compassData);
+                setCompassQuality(quality.quality);
+                setNeedsCalibration(quality.needsCalibration);
+                setCompassMessage(quality.message);
+                
+                // Show calibration prompt if needed (but not too often)
+                if (quality.needsCalibration && !showCalibration) {
+                    setShowCalibration(true);
+                }
+            } else {
+                // No compass data available - rely on GPS fallback
+                setCompassQuality('unavailable');
+                setCompassMessage('Compass unavailable - using GPS');
             }
         };
 
-        window.addEventListener('deviceorientation', handleOrientation);
+        // Request permission for device orientation (required on iOS 13+)
+        if (typeof (DeviceOrientationEvent as any).requestPermission === 'function') {
+            (DeviceOrientationEvent as any).requestPermission()
+                .then((response: string) => {
+                    if (response === 'granted') {
+                        window.addEventListener('deviceorientation', handleOrientation);
+                    } else {
+                        setCompassMessage('Compass permission denied');
+                        setCompassQuality('unavailable');
+                    }
+                })
+                .catch((error: Error) => {
+                    console.error('Orientation permission error:', error);
+                    setCompassQuality('unavailable');
+                });
+        } else {
+            // Auto-granted on Android and other platforms
+            window.addEventListener('deviceorientation', handleOrientation);
+        }
+
         return () => window.removeEventListener('deviceorientation', handleOrientation);
-    }, []);
+    }, [showCalibration]);
 
 
     // Update Sensor Data in Debug Store
@@ -666,7 +747,39 @@ export default function NavigationHUD({
                 </div>
             )}
 
-            {/* Bottom HUD - Location info */}
+            {/* Compass Calibration Overlay */}
+            {showCalibration && needsCalibration && (
+                <div className="absolute inset-0 flex items-center justify-center z-50 bg-black/70 backdrop-blur-sm">
+                    <div className="glass-dark rounded-2xl p-6 max-w-sm mx-4 border-2 border-yellow-500/50">
+                        <div className="flex items-center gap-3 mb-4">
+                            <AlertCircle className="w-8 h-8 text-yellow-400" />
+                            <h3 className="text-xl font-bold text-white">Calibrate Compass</h3>
+                        </div>
+                        
+                        <p className="text-gray-300 mb-4">
+                            For accurate AR navigation, calibrate your device's compass by moving it in a figure-8 pattern.
+                        </p>
+                        
+                        {/* Figure-8 Animation */}
+                        <div className="flex justify-center mb-4">
+                            <RotateCw className="w-16 h-16 text-dira-primary animate-spin" style={{ animationDuration: '3s' }} />
+                        </div>
+                        
+                        <p className="text-sm text-gray-400 mb-4 text-center">
+                            Hold your phone and rotate your wrist to trace a figure-8 in the air
+                        </p>
+                        
+                        <button
+                            onClick={() => setShowCalibration(false)}
+                            className="w-full bg-dira-primary hover:bg-dira-primary/80 text-white font-semibold py-3 px-4 rounded-lg transition-all"
+                        >
+                            Done Calibrating
+                        </button>
+                    </div>
+                </div>
+            )}
+
+            {/* Bottom HUD - Location info with Compass Quality */}
             <div className="absolute bottom-0 left-0 right-0 p-6 z-10 pointer-events-none">
                 <div className="glass-dark rounded-2xl p-4 max-w-md mx-auto pointer-events-auto">
                     <div className="grid grid-cols-2 gap-4 text-sm">
@@ -684,7 +797,27 @@ export default function NavigationHUD({
                         </div>
                         <div>
                             <p className="text-gray-400">Heading</p>
-                            <p className="font-mono text-white">{heading.toFixed(0)}°</p>
+                            <div className="flex items-center gap-2">
+                                <p className="font-mono text-white">{heading.toFixed(0)}°</p>
+                                <span className="text-xs text-gray-400">
+                                    ({getCardinalDirection(heading)})
+                                </span>
+                            </div>
+                            {/* Compass Quality Badge */}
+                            {(compassQuality === 'good' || compassQuality === 'poor' || compassQuality === 'unavailable') && (
+                                <div className="flex items-center gap-1 mt-1">
+                                    {compassQuality === 'poor' && (
+                                        <AlertCircle className="w-3 h-3 text-yellow-400" />
+                                    )}
+                                    <span className={`text-xs ${
+                                        compassQuality === 'good' ? 'text-blue-400' :
+                                        compassQuality === 'poor' ? 'text-yellow-400' :
+                                        'text-red-400'
+                                    }`}>
+                                        {compassMessage}
+                                    </span>
+                                </div>
+                            )}
                         </div>
                         <div>
                             <p className="text-gray-400">Mode</p>

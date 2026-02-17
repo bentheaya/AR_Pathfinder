@@ -4,6 +4,7 @@ import { Compass, Filter, MapPin, Brain } from 'lucide-react';
 import SkyMarker from './SkyMarker';
 import { obstacleCache } from '../services/obstacleCache';
 import { useThrottledHorizonAnalysis } from '../hooks/useThrottledHorizonAnalysis';
+import { isInFieldOfView } from '../utils/compassUtils';
 
 interface POI {
     id: number;
@@ -126,8 +127,7 @@ export default function HorizonMode({
 
             // Filter POIs visible in current direction (±90°)
             const visiblePOIs = pois.filter(poi => {
-                const relativeBearing = Math.abs(((poi.bearing_degrees - heading + 180) % 360) - 180);
-                return relativeBearing <= 90;
+                return isInFieldOfView(poi.bearing_degrees, heading, 180); // 180° = ±90° FOV
             });
 
             // Call horizon analysis API
@@ -218,8 +218,7 @@ export default function HorizonMode({
         // Hide if Gemini said to hide
         if (poi.action === 'hide') return false;
 
-        const relativeBearing = Math.abs(((poi.bearing_degrees - heading + 180) % 360) - 180);
-        return relativeBearing <= 90;
+        return isInFieldOfView(poi.bearing_degrees, heading, 180); // 180° = ±90° FOV
     });
 
     return (

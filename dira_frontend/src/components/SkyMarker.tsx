@@ -2,6 +2,7 @@ import { useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import { Billboard, Text } from '@react-three/drei';
 import * as THREE from 'three';
+import { calculateRelativeBearing } from '../utils/compassUtils';
 
 interface SkyMarkerProps {
     name: string;
@@ -37,14 +38,14 @@ export default function SkyMarker({
 
     // Calculate position on virtual sphere
     // The marker should be positioned based on the bearing relative to user's current heading
-    const relativeBearing = (bearing - userHeading + 360) % 360;
-    const relativeBearingRad = THREE.MathUtils.degToRad(relativeBearing);
+    const relativeBearingDegrees = calculateRelativeBearing(bearing, userHeading);
+    const relativeBearingRad = THREE.MathUtils.degToRad(relativeBearingDegrees);
 
     // Virtual sphere radius (constant distance from camera)
     const sphereRadius = 100;
 
     // Calculate X, Z position on the sphere
-    // We use -sin for X because Three.js uses a left-handed coordinate system
+    // We use sin for X because Three.js uses a left-handed coordinate system
     const x = Math.sin(relativeBearingRad) * sphereRadius;
     const z = -Math.cos(relativeBearingRad) * sphereRadius;
 
