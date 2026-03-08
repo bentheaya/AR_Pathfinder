@@ -1,6 +1,10 @@
 from django.contrib import admin
-from django.contrib.gis.admin import GISModelAdmin
+try:
+    from django.contrib.gis.admin import GISModelAdmin
+except Exception:
+    GISModelAdmin = admin.ModelAdmin  # Fallback when GDAL not installed
 from .models import Waypoint, NavigationSession, FrameAnalysis
+
 
 
 @admin.register(Waypoint)

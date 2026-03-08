@@ -5,12 +5,18 @@ import time
 from rest_framework import viewsets, status
 from rest_framework.decorators import api_view, action, throttle_classes
 from rest_framework.response import Response
-from django.contrib.gis.geos import Point
-from django.contrib.gis.measure import D
-from django.contrib.gis.db.models.functions import Distance
+try:
+    from django.contrib.gis.geos import Point
+    from django.contrib.gis.measure import D
+    from django.contrib.gis.db.models.functions import Distance
+except Exception:
+    Point = None  # type: ignore[assignment,misc]
+    D = None  # type: ignore[assignment,misc]
+    Distance = None  # type: ignore[assignment,misc]
 from django.http import JsonResponse
 from django.core.cache import cache
 from django.conf import settings
+
 
 from .models import Waypoint, NavigationSession, FrameAnalysis
 from .serializers import (

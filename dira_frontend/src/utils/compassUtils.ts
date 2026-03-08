@@ -78,7 +78,7 @@ function calculateCompassFromOrientation(
   gamma: number,
 ): number {
   // Convert to radians
-  const alphaRad = alpha * (Math.PI / 180);
+  // Convert to radians (only those needed for rotation math)
   const betaRad = beta * (Math.PI / 180);
   const gammaRad = gamma * (Math.PI / 180);
 
@@ -94,7 +94,7 @@ function calculateCompassFromOrientation(
 
   // Calculate compass heading accounting for screen orientation
   const cX = Math.cos(betaRad) * Math.sin(gammaRad);
-  const cY = -Math.sin(betaRad);
+  // We don't need cY for 2D heading projection
   const cZ = Math.cos(betaRad) * Math.cos(gammaRad);
 
   // Calculate heading from components

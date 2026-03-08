@@ -1,4 +1,4 @@
-import { calculateSolarPhase, SolarPhase } from './solarCalc';
+import { calculateSolarPhase } from './solarCalc';
 
 export type EnvironmentMode =
     | 'day'

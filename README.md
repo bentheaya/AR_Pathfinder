@@ -14,10 +14,19 @@ AR Navigation app using Django (Backend) and React (Frontend) with Three.js for 
 
 ### Backend (Django)
 
-1. Install system dependencies:
+1. Install system dependencies (GDAL and PostGIS):
+
+   **Ubuntu/Debian:**
    ```bash
-   sudo apt install python3.12-venv postgresql postgresql-contrib postgis
+   sudo apt install python3.12-venv postgresql postgresql-contrib postgis gdal-bin libgdal-dev
    ```
+
+   **Windows:**
+   Install GDAL using `winget` (bypasses compiling C++ from source):
+   ```powershell
+   winget install -e --id GISInternals.GDAL
+   ```
+   *Note: After installing on Windows, you must set `GDAL_LIBRARY_PATH` and `GEOS_LIBRARY_PATH` in `settings.py` to point to the installed `.dll` files (e.g. `C:\Program Files\GDAL\gdal3xx.dll`).*
 
 2. Create and activate virtual environment:
    ```bash

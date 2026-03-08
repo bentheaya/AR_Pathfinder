@@ -36,8 +36,8 @@ class PanoramaCache {
      */
     startPreCaching(
         currentHeading: number,
-        lat: number,
-        lon: number,
+        _lat: number,
+        _lon: number,
         analyzeFunc: (heading: number) => Promise<POIWithRefinement[]>
     ) {
         // Cancel previous pre-caching

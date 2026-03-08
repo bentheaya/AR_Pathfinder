@@ -5,6 +5,7 @@ Django settings for dira_backend project.
 import os
 from pathlib import Path
 from dotenv import load_dotenv
+from urllib.parse import urlparse, parse_qsl
 
 # Load environment variables
 load_dotenv()
@@ -28,7 +29,7 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
-    'django.contrib.gis',  # PostGIS support
+    'django.contrib.gis',  # Re-enabled now that GDAL is installed!
     'rest_framework',
     'corsheaders',
     'navigation',  # Our navigation app
@@ -65,18 +66,28 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'dira_backend.wsgi.application'
 
-# Database with PostGIS
+# Database — Neon Cloud PostgreSQL & PostGIS (parsed from DATABASE_URL)
 # https://docs.djangoproject.com/en/5.0/ref/settings/#databases
+_db_url = urlparse(os.getenv('DATABASE_URL', ''))
+
 DATABASES = {
     'default': {
-        'ENGINE': os.getenv('DB_ENGINE', 'django.contrib.gis.db.backends.postgis'),
-        'NAME': os.getenv('DB_NAME', 'dira_db'),
-        'USER': os.getenv('DB_USER', 'dira_user'),
-        'PASSWORD': os.getenv('DB_PASSWORD', ''),
-        'HOST': os.getenv('DB_HOST', 'localhost'),
-        'PORT': os.getenv('DB_PORT', '5432'),
+        'ENGINE': 'django.contrib.gis.db.backends.postgis',  # PostGIS enabled
+        'NAME': _db_url.path.lstrip('/'),
+        'USER': _db_url.username,
+        'PASSWORD': _db_url.password,
+        'HOST': _db_url.hostname,
+        'PORT': _db_url.port or 5432,
+        'OPTIONS': dict(parse_qsl(_db_url.query)),
     }
 }
+
+# GDAL / GEOS paths for Windows
+import platform
+if platform.system() == 'Windows':
+    GDAL_LIBRARY_PATH = r'C:\Program Files\GDAL\gdal.dll'
+    GEOS_LIBRARY_PATH = r'C:\Program Files\GDAL\geos_c.dll'
+
 
 
 # Password validation

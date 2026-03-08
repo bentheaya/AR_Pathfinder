@@ -1,4 +1,4 @@
-import { openDB, DBSchema, IDBPDatabase } from 'idb';
+import { openDB, IDBPDatabase } from 'idb';
 
 interface FeedbackEntry {
     id?: number;
@@ -11,7 +11,7 @@ interface FeedbackEntry {
     synced: boolean;
 }
 
-interface FeedbackDB extends DBSchema {
+interface FeedbackDB {
     feedback: {
         key: number;
         value: FeedbackEntry;
@@ -83,7 +83,7 @@ class FeedbackService {
             // Get all unsynced feedback
             const tx = this.db!.transaction('feedback', 'readonly');
             const index = tx.store.index('by-synced');
-            const unsynced = await index.getAll(false);
+            const unsynced = await index.getAll(false as unknown as IDBKeyRange);
 
             if (unsynced.length === 0) return;
 

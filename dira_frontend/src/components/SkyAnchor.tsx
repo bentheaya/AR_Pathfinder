@@ -44,7 +44,7 @@ export default function SkyAnchor({
     useFrame((state) => {
         if (beamRef.current && glowRef.current && topMarkerRef.current) {
             const targetOpacity = isAligned ? 1.0 : 0.0;
-            const currentOpacity = beamRef.current.material.opacity;
+            const currentOpacity = (beamRef.current.material as THREE.MeshStandardMaterial).opacity;
 
             // Smooth fade (lerp)
             const newOpacity = THREE.MathUtils.lerp(
@@ -53,7 +53,7 @@ export default function SkyAnchor({
                 0.05
             );
 
-            beamRef.current.material.opacity = newOpacity;
+            (beamRef.current.material as THREE.MeshStandardMaterial).opacity = newOpacity;
             (topMarkerRef.current.material as THREE.MeshStandardMaterial).opacity = newOpacity;
 
             // Pulsing glow effect

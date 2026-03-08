@@ -8,11 +8,7 @@ function App() {
 
     if (isNavigating) {
         return (
-            <NavigationHUD
-                direction="forward"
-                distance={150}
-                message="Continue straight ahead"
-            />
+            <NavigationHUD />
         );
     }
 
