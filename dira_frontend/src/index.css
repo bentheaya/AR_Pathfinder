@@ -36,18 +36,29 @@ body {
 }
 
 /* Glassmorphism utilities */
-@layer utilities {
-  .glass {
-    background: rgba(255, 255, 255, 0.05);
-    backdrop-filter: blur(10px);
-    -webkit-backdrop-filter: blur(10px);
-    border: 1px solid rgba(255, 255, 255, 0.1);
+@layer components {
+  .glass-dark {
+    @apply bg-black/40 backdrop-blur-md border border-white/10 shadow-2xl;
   }
   
-  .glass-dark {
-    background: rgba(0, 0, 0, 0.3);
-    backdrop-filter: blur(10px);
-    -webkit-backdrop-filter: blur(10px);
-    border: 1px solid rgba(255, 255, 255, 0.1);
+  .glass-light {
+    @apply bg-white/5 backdrop-blur-md border border-white/10 shadow-xl;
+  }
+
+  .btn-dira {
+    @apply bg-gradient-to-r from-dira-primary to-dira-secondary hover:brightness-110 active:scale-95 transition-all text-white font-semibold py-3 px-6 rounded-xl shadow-lg;
+  }
+}
+
+@layer utilities {
+  .scanline {
+    @apply absolute inset-0 pointer-events-none z-[100] overflow-hidden opacity-[0.03];
+    background: linear-gradient(
+      to bottom,
+      transparent 0%,
+      rgba(0, 217, 255, 0.5) 50%,
+      transparent 100%
+    );
+    background-size: 100% 4px;
   }
 }

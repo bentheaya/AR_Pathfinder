@@ -8,10 +8,15 @@ import {
     Brain,
     Scan,
     AlertCircle,
-    RotateCw
+    RotateCw,
+    Mic,
+    MicOff,
+    Home
 } from 'lucide-react';
+import { speak, startListening, stopListening, getIsListening } from '../services/voiceService';
 import * as THREE from 'three';
 import HorizonMode from './HorizonMode';
+import MiniMapHUD from './MiniMapHUD';
 
 import NeuralDebugOverlay from './NeuralDebugOverlay'; // Import Overlay
 import { useDebugStore } from '../stores/debugStore'; // Import Store
@@ -22,7 +27,6 @@ import {
     calculateGPSHeading,
     assessCompassQuality,
     HeadingSmoothing,
-    getCardinalDirection,
     type CompassQuality,
     type GPSPosition
 } from '../utils/compassUtils';
@@ -138,12 +142,14 @@ interface NavigationResponse {
 interface NavigationHUDProps {
     destination?: string;
     apiBaseUrl?: string;
+    onBack?: () => void;
 }
 
 // Main Navigation HUD Component with Agentic Loop
 export default function NavigationHUD({
     destination,
-    apiBaseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'
+    apiBaseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000',
+    onBack
 }: NavigationHUDProps) {
     // === DEBUG STORE INTEGRATION ===
     const toggleDebug = useDebugStore(state => state.toggleOpen);
@@ -167,7 +173,6 @@ export default function NavigationHUD({
     // Compass quality state
     const [compassQuality, setCompassQuality] = useState<CompassQuality>('unavailable');
     const [needsCalibration, setNeedsCalibration] = useState(false);
-    const [compassMessage, setCompassMessage] = useState('Initializing compass...');
     const [showCalibration, setShowCalibration] = useState(false);
     
     // GPS-based heading fallback
@@ -199,6 +204,12 @@ export default function NavigationHUD({
     const [isOnline, setIsOnline] = useState(true);
     const [fromCache, setFromCache] = useState(false);
     const [lastKnownInstruction, setLastKnownInstruction] = useState<NavigationInstruction | null>(null);
+
+    // Voice interaction state
+    const [isVoiceListening, setIsVoiceListening] = useState(false);
+    const [voiceTranscript, setVoiceTranscript] = useState<string | null>(null);
+    const [voiceReply, setVoiceReply] = useState<string | null>(null);
+    const greetingIndexRef = useRef(0);
 
     // Frame analysis interval
     const analysisIntervalRef = useRef<NodeJS.Timeout | null>(null);
@@ -243,6 +254,7 @@ export default function NavigationHUD({
 
         setIsProcessing(true);
         const startTime = Date.now();
+        console.log('[NavigationHUD] captureAndAnalyzeFrame: Starting capture cycle');
         addLog('SYSTEM', 'Initiating frame capture cycle', 'info');
 
         try {
@@ -287,7 +299,7 @@ export default function NavigationHUD({
             addLog('SYSTEM', `Sending frame to Gemini(${(compressedSize / 1024).toFixed(1)}KB)`, 'info');
 
             // Call backend API
-            const response = await fetch(`${apiBaseUrl}/analyze-frame/`, {
+            const response = await fetch(`${apiBaseUrl}/api/v1/analyze-frame/`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -335,7 +347,7 @@ export default function NavigationHUD({
             }
 
         } catch (error) {
-            console.error('Frame analysis error:', error);
+            console.error('[NavigationHUD] Frame analysis error:', error);
             addLog('SYSTEM', `Connection lost - using GPS-only mode`, 'error');
             setIsOnline(false);
 
@@ -362,6 +374,7 @@ export default function NavigationHUD({
     // === INITIALIZE CAMERA ===
     useEffect(() => {
         async function initCamera() {
+            console.log('[NavigationHUD] initCamera: Initializing media devices');
             try {
                 const stream = await navigator.mediaDevices.getUserMedia({
                     video: {
@@ -412,7 +425,6 @@ export default function NavigationHUD({
                         if (gpsHeading) {
                             const smoothed = headingSmoother.current.smooth(gpsHeading.heading);
                             setHeading(smoothed);
-                            setCompassMessage('Using GPS movement for direction');
                         }
                     }
                     
@@ -441,7 +453,6 @@ export default function NavigationHUD({
                 const quality = assessCompassQuality(compassData);
                 setCompassQuality(quality.quality);
                 setNeedsCalibration(quality.needsCalibration);
-                setCompassMessage(quality.message);
                 
                 // Show calibration prompt if needed (but not too often)
                 if (quality.needsCalibration && !showCalibration) {
@@ -450,7 +461,6 @@ export default function NavigationHUD({
             } else {
                 // No compass data available - rely on GPS fallback
                 setCompassQuality('unavailable');
-                setCompassMessage('Compass unavailable - using GPS');
             }
         };
 
@@ -459,9 +469,8 @@ export default function NavigationHUD({
             (DeviceOrientationEvent as any).requestPermission()
                 .then((response: string) => {
                     if (response === 'granted') {
-                        window.addEventListener('deviceorientation', handleOrientation);
+                        window.addEventListener('deviceorientation', handleOrientation as any);
                     } else {
-                        setCompassMessage('Compass permission denied');
                         setCompassQuality('unavailable');
                     }
                 })
@@ -563,12 +572,80 @@ export default function NavigationHUD({
         }
     }, [location, ambientLight, networkSpeed, mode, addLog, updateAdaptiveStats]);
 
-    // Track manual mode changes
+    // Track manual mode changes — also triggers an ambient Gemini greeting
     const handleModeChange = useCallback((newMode: typeof mode) => {
         setMode(newMode);
         userModeOverrideRef.current = { mode: newMode, timestamp: Date.now() };
         addLog('USER', `Manual mode switch: ${newMode}`, 'info');
-    }, [addLog]);
+
+        // Ambient greeting on mode switch (non-blocking)
+        const idx = greetingIndexRef.current++;
+        fetch(`${apiBaseUrl}/api/v1/ambient-greeting/?mode=${newMode}&idx=${idx % 3}`)
+            .then(r => r.json())
+            .then(d => { if (d.greeting) speak(d.greeting); })
+            .catch(() => {});
+    }, [addLog, apiBaseUrl]);
+
+    // === AMBIENT GREETING ON MOUNT ===
+    useEffect(() => {
+        // Greet the user once when the app starts (slight delay so voice is ready)
+        const timer = setTimeout(() => {
+            fetch(`${apiBaseUrl}/api/v1/ambient-greeting/?mode=navigation&idx=0`)
+                .then(r => r.json())
+                .then(d => { if (d.greeting) speak(d.greeting); })
+                .catch(() => {});
+        }, 1500);
+        return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+
+    // === VOICE COMMAND HANDLER ===
+    const handleMicPress = useCallback(() => {
+        if (getIsListening()) {
+            stopListening();
+            setIsVoiceListening(false);
+            return;
+        }
+
+        setVoiceTranscript(null);
+        setVoiceReply(null);
+
+        startListening({
+            onStart: () => setIsVoiceListening(true),
+            onEnd: () => setIsVoiceListening(false),
+            onError: (err) => {
+                setIsVoiceListening(false);
+                addLog('SYSTEM', `Mic error: ${err}`, 'error');
+            },
+            onResult: async ({ transcript }) => {
+                setVoiceTranscript(transcript);
+                addLog('USER', `Voice: "${transcript}"`, 'info');
+
+                try {
+                    const res = await fetch(`${apiBaseUrl}/api/v1/voice-command/`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            transcript,
+                            mode,
+                            latitude: location?.lat,
+                            longitude: location?.lon,
+                            heading,
+                            thought_signature: thoughtSignatureRef.current,
+                        }),
+                    });
+                    const data = await res.json();
+                    const reply = data.response || '';
+                    setVoiceReply(reply);
+                    speak(reply);
+                    addLog('GEMINI', reply, 'success');
+                } catch (err) {
+                    speak('Sorry, I had trouble connecting. Please try again.');
+                    addLog('SYSTEM', 'Voice command failed', 'error');
+                }
+            },
+        });
+    }, [addLog, apiBaseUrl, heading, location, mode]);
 
 
     // === START FRAME ANALYSIS LOOP (ADAPTIVE) ===
@@ -620,24 +697,72 @@ export default function NavigationHUD({
                 </button>
             </div>
 
-            {/* Mode Toggle Button */}
-            <div className="absolute top-4 right-4 z-30">
-                <button
-                    onClick={() => handleModeChange(mode === 'navigation' ? 'horizon' : 'navigation')}
-                    className="glass-dark p-3 rounded-xl hover:bg-white/20 transition-all"
-                >
-                    {mode === 'navigation' ? (
-                        <Scan className="w-6 h-6 text-dira-primary" />
-                    ) : (
-                        <ArrowBigUp className="w-6 h-6 text-dira-primary" />
-                    )}
-                </button>
+            {/* Scanline overlay for that tech aesthetic */}
+            <div className="scanline" />
 
-                {/* Mode Indicator Badge */}
-                <div className="mt-2 glass-dark px-3 py-1 rounded-lg text-center">
-                    <p className="text-xs text-dira-primary font-semibold uppercase tracking-wide">
-                        {mode === 'navigation' ? '🧭 Navigation' : '🌍 Horizon'}
-                    </p>
+
+            {/* Header Controls (Top) */}
+            <div className="absolute top-4 left-4 right-4 z-30 flex justify-between items-start pointer-events-none">
+                {/* Left Side: Home & Neural Link */}
+                <div className="flex flex-col gap-3 pointer-events-auto sm:gap-4">
+                    <button
+                        onClick={onBack}
+                        className="glass-dark p-3.5 rounded-2xl hover:bg-white/10 active:scale-95 transition-all text-white flex items-center gap-2 group"
+                    >
+                        <Home className="w-6 h-6 text-dira-primary group-hover:scale-110 transition-transform" />
+                        <span className="text-[10px] font-bold uppercase tracking-widest hidden sm:block">Return Home</span>
+                    </button>
+                    
+                    <button
+                        onClick={() => toggleDebug()}
+                        className="glass-dark p-3.5 rounded-2xl hover:bg-white/10 active:scale-95 transition-all text-purple-400 group"
+                        title="Neural Diagnostics"
+                    >
+                         <Brain className="w-6 h-6 group-hover:rotate-12 transition-transform" />
+                    </button>
+                </div>
+
+                {/* Right Side: Mode Toggle & Mic */}
+                <div className="flex flex-col gap-3 pointer-events-auto items-end">
+                    <button
+                        onClick={() => handleModeChange(mode === 'navigation' ? 'horizon' : 'navigation')}
+                        className="glass-dark p-3.5 rounded-2xl hover:bg-white/10 active:scale-95 transition-all group"
+                    >
+                        {mode === 'navigation' ? (
+                            <Scan className="w-6 h-6 text-dira-primary group-hover:scale-110 transition-transform" />
+                        ) : (
+                            <ArrowBigUp className="w-6 h-6 text-dira-primary group-hover:scale-110 transition-transform" />
+                        )}
+                    </button>
+
+                    {/* Mode Indicator Badge */}
+                    <div className="glass-dark px-4 py-2 rounded-xl text-center border-dira-primary/20 bg-dira-primary/5">
+                        <p className="text-[9px] text-dira-primary font-black uppercase tracking-[0.2em]">
+                            {mode === 'navigation' ? 'Nav-Link' : 'Horizon-OS'}
+                        </p>
+                    </div>
+
+                    {/* Repositioned Mic Button - Much natural for one-handed rail use */}
+                    <button
+                        onClick={handleMicPress}
+                        className={`p-5 rounded-full shadow-2xl transition-all duration-300 active:scale-90 group relative ${
+                            isVoiceListening
+                                ? 'bg-red-500/80 hover:bg-red-600 shadow-red-500/40'
+                                : 'bg-dira-primary/80 hover:bg-dira-primary shadow-dira-primary/40'
+                        }`}
+                        title={isVoiceListening ? 'Tap to stop' : 'Tap to talk to Gemini'}
+                    >
+                        {isVoiceListening && (
+                            <>
+                                <span className="absolute inset-0 rounded-full bg-red-400 opacity-60 animate-ping" />
+                                <span className="absolute inset-[-4px] rounded-full border-2 border-red-400/30 animate-pulse" />
+                            </>
+                        )}
+                        {isVoiceListening
+                            ? <MicOff className="w-7 h-7 text-white relative z-10" />
+                            : <Mic className="w-7 h-7 text-white relative z-10 group-hover:scale-110 transition-transform" />
+                        }
+                    </button>
                 </div>
             </div>
 
@@ -659,6 +784,16 @@ export default function NavigationHUD({
                             </Canvas>
                         </div>
                     )}
+
+                    {/* Mini-Map HUD (Bottom Left) */}
+                    {location && (
+                        <MiniMapHUD
+                            currentLat={location?.lat || 0}
+                            currentLon={location?.lon || 0}
+                            currentHeading={heading}
+                            apiBaseUrl={apiBaseUrl || ''}
+                        />
+                    )}
                 </>
             ) : (
                 <>
@@ -666,8 +801,8 @@ export default function NavigationHUD({
                     {location && (
                         <div className="absolute inset-0">
                             <HorizonMode
-                                latitude={location.lat}
-                                longitude={location.lon}
+                                latitude={location?.lat || 0}
+                                longitude={location?.lon || 0}
                                 heading={heading}
                                 apiBaseUrl={apiBaseUrl}
                             />
@@ -678,20 +813,21 @@ export default function NavigationHUD({
 
             {/* HUD Information - Glassmorphic overlay (Only in Navigation Mode) */}
             {mode === 'navigation' && (
-                <div className="absolute top-0 left-0 right-0 p-6 z-10 pointer-events-none">
+                <div className="absolute top-40 sm:top-32 left-0 right-0 p-4 z-10 pointer-events-none animate-fade-in">
                     {/* Container for centering, pointer-events-auto for interactions if needed */}
-                    <div className="glass-dark rounded-2xl p-4 max-w-md mx-auto mt-12 pointer-events-auto">
-                        <div className="flex items-center gap-3">
-                            <div className="bg-dira-primary/20 p-2 rounded-lg">
-                                <ArrowBigUp className="w-6 h-6 text-dira-primary" />
+                    <div className="glass-dark rounded-[2rem] p-5 max-w-sm mx-auto pointer-events-auto border-white/5 shadow-[0_0_50px_rgba(0,0,0,0.5)]">
+                        <div className="flex items-center gap-4">
+                            <div className="bg-dira-primary/10 p-3 rounded-2xl border border-dira-primary/20 shadow-[inset_0_0_15px_rgba(0,217,255,0.1)]">
+                                <ArrowBigUp className="w-7 h-7 text-dira-primary animate-pulse-slow" />
                             </div>
                             <div className="flex-1">
-                                <p className="text-sm text-gray-300">Next instruction</p>
-                                <p className="text-lg font-semibold text-white">{currentInstruction.message}</p>
+                                <p className="text-[10px] text-dira-primary font-black uppercase tracking-[0.15em] mb-0.5">Vector Link</p>
+                                <p className="text-base font-bold text-white leading-tight">{currentInstruction.message}</p>
                             </div>
-                            <div className="text-right">
-                                <p className="text-2xl font-bold text-dira-primary">
-                                    {currentInstruction.distance > 0 ? `${currentInstruction.distance} m` : '---'}
+                            <div className="text-right pl-2 border-l border-white/10">
+                                <p className="text-2xl font-black text-white tracking-tighter">
+                                    {currentInstruction.distance > 0 ? currentInstruction.distance : '---'}
+                                    <span className="text-[10px] text-dira-primary ml-0.5 uppercase">m</span>
                                 </p>
                             </div>
                         </div>
@@ -747,6 +883,23 @@ export default function NavigationHUD({
                 </div>
             )}
 
+            {/* ===== VOICE TRANSCRIPT (Repositioned for less clutter) ===== */}
+            <div className="absolute top-2/3 left-0 right-0 z-30 flex flex-col items-center gap-2 pointer-events-none">
+                {/* Voice transcript / reply bubble */}
+                {(voiceTranscript || voiceReply) && (
+                    <div className="pointer-events-auto glass-dark rounded-2xl px-4 py-3 max-w-xs text-center shadow-lg border border-white/10 animate-fade-in">
+                        {voiceTranscript && (
+                            <p className="text-[10px] text-gray-400 mb-1">
+                                <span className="text-dira-primary">You:</span> {voiceTranscript}
+                            </p>
+                        )}
+                        {voiceReply && (
+                            <p className="text-sm text-white font-medium leading-tight">{voiceReply}</p>
+                        )}
+                    </div>
+                )}
+            </div>
+
             {/* Compass Calibration Overlay */}
             {showCalibration && needsCalibration && (
                 <div className="absolute inset-0 flex items-center justify-center z-50 bg-black/70 backdrop-blur-sm">
@@ -779,54 +932,42 @@ export default function NavigationHUD({
                 </div>
             )}
 
-            {/* Bottom HUD - Location info with Compass Quality */}
-            <div className="absolute bottom-0 left-0 right-0 p-6 z-10 pointer-events-none">
-                <div className="glass-dark rounded-2xl p-4 max-w-md mx-auto pointer-events-auto">
-                    <div className="grid grid-cols-2 gap-4 text-sm">
-                        <div>
-                            <p className="text-gray-400">Latitude</p>
-                            <p className="font-mono text-white">
-                                {location ? location.lat.toFixed(6) : '---'}
-                            </p>
+            {/* Bottom HUD - Location info (Desktop / Large Mobile) */}
+            <div className="absolute bottom-6 right-6 p-0 z-10 pointer-events-none sm:bottom-8 sm:right-8">
+                <div className="glass-dark rounded-2xl p-4 min-w-[200px] pointer-events-auto border-white/5 group hover:bg-black/60 transition-colors">
+                    <div className="flex flex-col gap-2 text-[10px]">
+                        <div className="flex justify-between items-center group/lat">
+                            <span className="text-gray-500 uppercase font-black tracking-widest group-hover/lat:text-dira-primary transition-colors">LAT</span>
+                            <span className="text-white font-mono text-xs tabular-nums">{location ? (location.lat as number).toFixed(5) : '---'}</span>
                         </div>
-                        <div>
-                            <p className="text-gray-400">Longitude</p>
-                            <p className="font-mono text-white">
-                                {location ? location.lon.toFixed(6) : '---'}
-                            </p>
+                        <div className="flex justify-between items-center group/lon">
+                            <span className="text-gray-500 uppercase font-black tracking-widest group-hover/lon:text-dira-primary transition-colors">LON</span>
+                            <span className="text-white font-mono text-xs tabular-nums">{location ? (location.lon as number).toFixed(5) : '---'}</span>
                         </div>
-                        <div>
-                            <p className="text-gray-400">Heading</p>
+                        <div className="flex justify-between items-center group/hdg">
+                            <span className="text-gray-500 uppercase font-black tracking-widest group-hover/hdg:text-dira-primary transition-colors">HDG</span>
                             <div className="flex items-center gap-2">
-                                <p className="font-mono text-white">{heading.toFixed(0)}°</p>
-                                <span className="text-xs text-gray-400">
-                                    ({getCardinalDirection(heading)})
-                                </span>
-                            </div>
-                            {/* Compass Quality Badge */}
-                            {(compassQuality === 'good' || compassQuality === 'poor' || compassQuality === 'unavailable') && (
-                                <div className="flex items-center gap-1 mt-1">
-                                    {compassQuality === 'poor' && (
-                                        <AlertCircle className="w-3 h-3 text-yellow-400" />
-                                    )}
-                                    <span className={`text-xs ${
-                                        compassQuality === 'good' ? 'text-blue-400' :
-                                        compassQuality === 'poor' ? 'text-yellow-400' :
-                                        'text-red-400'
-                                    }`}>
-                                        {compassMessage}
-                                    </span>
+                                <span className="text-white font-mono text-xs tabular-nums">{heading.toFixed(0)}°</span>
+                                <div className="w-12 h-1 bg-white/5 rounded-full overflow-hidden">
+                                    <div 
+                                        className="h-full bg-dira-primary transition-all duration-300" 
+                                        style={{ width: `${(heading / 360) * 100}%` }}
+                                    />
                                 </div>
-                            )}
+                            </div>
                         </div>
-                        <div>
-                            <p className="text-gray-400">Mode</p>
-                            <p className="font-semibold text-dira-primary flex items-center gap-1">
-                                AR + AI
-                                {isProcessing && (
-                                    <span className="inline-block w-2 h-2 bg-dira-primary rounded-full animate-pulse"></span>
-                                )}
-                            </p>
+                        <div className="mt-2 pt-2 border-t border-white/10 flex items-center justify-between">
+                             <div className="flex items-center gap-1.5">
+                                <div className={`w-1.5 h-1.5 rounded-full animate-pulse ${isOnline ? 'bg-dira-primary shadow-[0_0_8px_#00d9ff]' : 'bg-red-500'}`} />
+                                <span className="text-dira-primary/80 lowercase font-black tracking-tighter italic">system nexus active</span>
+                             </div>
+                             {isProcessing && (
+                                <div className="flex gap-0.5">
+                                    <div className="w-1 h-3 bg-dira-primary/30 animate-[bounce_1s_infinite_0ms]" />
+                                    <div className="w-1 h-3 bg-dira-primary/30 animate-[bounce_1s_infinite_150ms]" />
+                                    <div className="w-1 h-3 bg-dira-primary/30 animate-[bounce_1s_infinite_300ms]" />
+                                </div>
+                             )}
                         </div>
                     </div>
                 </div>

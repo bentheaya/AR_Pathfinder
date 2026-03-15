@@ -82,6 +82,7 @@ class NavigationAPI {
         thought_signature?: string | null;
         compress?: boolean;
     }): Promise<NavigationResponse> {
+        console.log(`[NavigationAPI] Analyzing frame: Lat=${payload.latitude}, Lon=${payload.longitude}, Heading=${payload.heading}`);
         const response = await fetch(`${this.baseUrl}/api/v1/analyze-frame/`, {
             method: 'POST',
             headers: {
@@ -91,10 +92,13 @@ class NavigationAPI {
         });
 
         if (!response.ok) {
+            console.error(`[NavigationAPI] Frame analysis failed: ${response.status}`);
             throw new Error(`API Error: ${response.status} ${response.statusText}`);
         }
 
-        return response.json();
+        const data = await response.json();
+        console.log(`[NavigationAPI] Analysis result received:`, data);
+        return data;
     }
 
     /**

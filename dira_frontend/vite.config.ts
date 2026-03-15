@@ -56,15 +56,15 @@ export default defineConfig({
     port: 5173,
     host: '0.0.0.0', 
     strictPort: true, 
+    https: {},
     hmr: {
-      protocol: 'ws', // Change 'wss' to 'ws' to skip SSL for the socket
-      host: 'localhost',
-      port: 5173,
+        protocol: 'wss',
+        clientPort: 443,
     },
     // The proxy ensures your React 'fetch' calls hit the Django server
     proxy: {
       '/api': {
-        target: 'http://localhost:8000',
+        target: 'http://127.0.0.1:8000',
         changeOrigin: true,
         secure: false,
       }

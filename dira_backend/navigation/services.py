@@ -16,21 +16,58 @@ logger = logging.getLogger(__name__)
 
 class GeminiNavigationService:
     """
-    Service class for Gemini 3 AI-powered navigation analysis.
-    Uses thought signatures to maintain reasoning context across frames.
+    Service class for Gemini AI-powered navigation analysis.
+    Uses Gemini API (v1beta) or Vertex AI with flash models.
     """
-    
+
+    # Primary model (Gemini 1.5 Flash is highly stable on Vertex AI)
+    MODEL_PRIMARY = "gemini-1.5-flash"
+    MODEL_FALLBACK = "gemini-1.5-flash-8b"
+
     def __init__(self):
-        """Initialize Gemini client with v1alpha API version."""
-        try:
-            self.client = genai.Client(
-                api_key=settings.GEMINI_API_KEY,
-                http_options={'api_version': 'v1alpha'}
-            )
-        except Exception as e:
-            logger.error(f"Failed to initialize Gemini client: {e}")
-            self.client = None
-    
+        """
+        Initialize Gemini client.
+        Primary: API key mode (v1beta) — usually for AI Studio keys.
+        Fallback: Vertex AI mode — for Cloud Console keys and enterprise access.
+        """
+        self.client = None
+        self.active_model = self.MODEL_PRIMARY
+
+        project = getattr(settings, 'GOOGLE_CLOUD_PROJECT', None)
+        location = getattr(settings, 'GOOGLE_CLOUD_LOCATION', 'us-central1')
+        api_key = getattr(settings, 'GEMINI_API_KEY', None)
+
+        # 1. Try API Key Mode (generativelanguage.googleapis.com)
+        if api_key and api_key != 'your-gemini-api-key-here':
+            try:
+                self.client = genai.Client(
+                    api_key=api_key,
+                    http_options={'api_version': 'v1beta'}
+                )
+                # Verify access with a simple call
+                # self.client.models.get(model=self.active_model)
+                logger.info(f"[Gemini] API key client ready (v1beta) — model={self.active_model}")
+            except Exception as e:
+                logger.warning(f"[Gemini] API key init/verification failed: {e}")
+                self.client = None
+
+        # 2. Try Vertex AI Mode (aiplatform.googleapis.com)
+        if not self.client and project:
+            try:
+                self.client = genai.Client(
+                    vertexai=True,
+                    project=project,
+                    location=location,
+                    http_options={'api_version': 'v1'}
+                )
+                logger.info(f"[Gemini] Vertex AI client ready — project={project} model={self.active_model}")
+            except Exception as e:
+                logger.error(f"[Gemini] Vertex AI init failed: {e}")
+                self.client = None
+
+        if not self.client:
+            logger.error("[Gemini] No working client. Please check GEMINI_API_KEY or Vertex AI settings in .env")
+
     def analyze_navigation_frame(
         self,
         image_b64: str,
@@ -117,12 +154,11 @@ Example: {{"instruction": "Turn right towards the yellow cafe building", "bearin
                 response_modalities=['TEXT']
             )
 
-            # 4. Generate content with thought signature continuity
+            # 4. Generate content
             response = self.client.models.generate_content(
-                model="gemini-3-flash-preview",
+                model=self.active_model,
                 contents=[image_part, prompt],
                 config=config,
-                thought_signature=thought_signature  # Maintains reasoning chain
             )
 
             # 5. Parse and validate response
@@ -137,7 +173,7 @@ Example: {{"instruction": "Turn right towards the yellow cafe building", "bearin
                 
                 return {
                     "data": navigation_data,
-                    "thought_signature": response.thought_signature,
+                    "thought_signature": None,  # Not supported in current SDK
                     "success": True
                 }
                 
@@ -147,7 +183,7 @@ Example: {{"instruction": "Turn right towards the yellow cafe building", "bearin
                 return {
                     "error": "Invalid JSON response from AI",
                     "data": self._get_fallback_response(),
-                    "thought_signature": response.thought_signature
+                    "thought_signature": None
                 }
         
         except Exception as e:
@@ -546,6 +582,46 @@ Return ONLY the guidance text, nothing else."""
             "is_lost": False
         }
         return {**defaults, **data}
+
+    def generate_voice_response(
+        self,
+        prompt: str,
+        thought_signature: Optional[str] = None
+    ) -> str:
+        """
+        Generate a conversational voice response from Gemini.
+        Used for the voice command feature — no image required.
+
+        Args:
+            prompt: The full prompt including system context and user transcript.
+            thought_signature: Optional agentic loop signature for context.
+
+        Returns:
+            A plain text response string for speech synthesis.
+        """
+        if not self.client:
+            return "I'm having trouble connecting right now. Please try again."
+
+        try:
+            config = types.GenerateContentConfig(
+                thinking_config=types.ThinkingConfig(
+                    thinking_level=types.ThinkingLevel.LOW
+                ),
+                temperature=0.7,   # More conversational
+                response_modalities=['TEXT']
+            )
+
+            response = self.client.models.generate_content(
+                model=self.active_model,
+                contents=[prompt],
+                config=config,
+            )
+
+            return response.text.strip()
+
+        except Exception as e:
+            logger.error(f"Voice response generation failed: {e}", exc_info=True)
+            return "I encountered an error. Please try again."
 
 
 # Global service instance

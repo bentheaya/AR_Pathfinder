@@ -4,10 +4,10 @@ import { Compass, Filter, MapPin, Brain } from 'lucide-react';
 import SkyMarker from './SkyMarker';
 import { obstacleCache } from '../services/obstacleCache';
 import { useThrottledHorizonAnalysis } from '../hooks/useThrottledHorizonAnalysis';
-import { isInFieldOfView } from '../utils/compassUtils';
+import { isInFieldOfView, calculateBearing, calculateDistance } from '../utils/compassUtils';
 
 interface POI {
-    id: number;
+    id: number | string;
     name: string;
     category: string;
     distance_meters: number;
@@ -43,6 +43,7 @@ export default function HorizonMode({
     apiBaseUrl
 }: HorizonModeProps) {
     const [pois, setPois] = useState<POI[]>([]);
+    const [googlePois, setGooglePois] = useState<POI[]>([]);
     const [selectedCategory, setSelectedCategory] = useState('all');
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
@@ -52,7 +53,7 @@ export default function HorizonMode({
     const videoRef = useRef<HTMLVideoElement>(null);
     const thoughtSignatureRef = useRef<string | null>(null);
 
-    // Fetch POIs within 50km
+    // Fetch Internal Waypoints (within 50km)
     const fetchPOIs = useCallback(async () => {
         setIsLoading(true);
         setError(null);
@@ -69,7 +70,7 @@ export default function HorizonMode({
                 params.append('category', selectedCategory);
             }
 
-            const response = await fetch(`${apiBaseUrl}/waypoints/nearby/?${params}`);
+            const response = await fetch(`${apiBaseUrl}/api/v1/waypoints/nearby/?${params}`);
 
             if (!response.ok) {
                 throw new Error(`Failed to fetch POIs: ${response.statusText}`);
@@ -80,38 +81,57 @@ export default function HorizonMode({
             setAiAnalyzed(false); // Reset AI analysis flag
 
         } catch (err) {
-            console.error('Error fetching POIs:', err);
+            console.error('Error fetching internal POIs:', err);
             setError(err instanceof Error ? err.message : 'Failed to load landmarks');
         } finally {
             setIsLoading(false);
         }
     }, [latitude, longitude, selectedCategory, apiBaseUrl]);
 
+    // Fetch Google Maps POIs
+    const fetchGooglePOIs = useCallback(async () => {
+        try {
+            const response = await fetch(`${apiBaseUrl}/api/v1/poi-nearby/?lat=${latitude}&lon=${longitude}&radius=5000`);
+            const data = await response.json();
+            
+            if (data.results) {
+                const adapted = data.results.map((item: any) => {
+                    const dist = calculateDistance(latitude, longitude, item.lat, item.lon);
+                    const bear = calculateBearing(latitude, longitude, item.lat, item.lon);
+                    
+                    return {
+                        id: `g-${item.id}`,
+                        name: item.name,
+                        category: item.category,
+                        coords: [item.lon, item.lat],
+                        distance_meters: dist,
+                        bearing_degrees: bear
+                    };
+                });
+                setGooglePois(adapted);
+            }
+        } catch (err) {
+            console.error('Error fetching Google POIs:', err);
+        }
+    }, [latitude, longitude, apiBaseUrl]);
+
     // Gemini 3 Horizon Analysis with Obstacle Caching
     const analyzeHorizon = useCallback(async () => {
-        if (!videoRef.current || !canvasRef.current || pois.length === 0) return;
+        const allCurrentPois = [...pois, ...googlePois];
+        if (!videoRef.current || !canvasRef.current || allCurrentPois.length === 0) return;
 
         try {
             // 🎯 PERFORMANCE: Check obstacle cache first
             const cachedFeatures = await obstacleCache.get(latitude, longitude, heading);
 
             if (cachedFeatures) {
-                // Cache HIT - instant results!
-                console.log('⚡ Using cached skyline features (0ms latency)');
-
-                // Apply cached features to POIs (simplified refinement)
-                // In a cache hit, we don't have refined_pois, so just mark as analyzed
                 setAiAnalyzed(true);
                 return;
             }
 
-            // Cache MISS - proceed with Gemini analysis
-            console.log('🔍 Cache miss, analyzing with Gemini 3...');
-
             // Capture frame from video
             const canvas = canvasRef.current;
             const video = videoRef.current;
-
             if (!canvas || !video) return;
 
             canvas.width = video.videoWidth || 640;
@@ -119,15 +139,13 @@ export default function HorizonMode({
 
             const ctx = canvas.getContext('2d');
             if (!ctx) return;
-
             ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-            // Convert to base64 JPEG
             const imageB64 = canvas.toDataURL('image/jpeg', 0.7).split(',')[1];
 
             // Filter POIs visible in current direction (±90°)
-            const visiblePOIs = pois.filter(poi => {
-                return isInFieldOfView(poi.bearing_degrees, heading, 180); // 180° = ±90° FOV
+            const visiblePoisToAnalyze = allCurrentPois.filter(poi => {
+                return isInFieldOfView(poi.bearing_degrees, heading, 180);
             });
 
             // Call horizon analysis API
@@ -139,41 +157,30 @@ export default function HorizonMode({
                     latitude,
                     longitude,
                     heading,
-                    visible_pois: visiblePOIs,
+                    visible_pois: visiblePoisToAnalyze,
                     thought_signature: thoughtSignatureRef.current
                 })
             });
 
-            if (!response.ok) {
-                console.warn('Horizon analysis failed, using default positioning');
-                return;
-            }
+            if (!response.ok) return;
 
             const analysisData = await response.json();
 
-            // Update thought signature
             if (analysisData.thought_signature) {
                 thoughtSignatureRef.current = analysisData.thought_signature;
             }
 
-            // 💾 PERFORMANCE: Cache the skyline features for future use
             if (analysisData.skyline_features && analysisData.skyline_features.length > 0) {
-                await obstacleCache.set(
-                    latitude,
-                    longitude,
-                    heading,
-                    analysisData.skyline_features
-                );
+                await obstacleCache.set(latitude, longitude, heading, analysisData.skyline_features);
             }
 
-            // Apply refinements to POIs
+            // Apply refinements to POIs (both internal and Google)
             if (analysisData.refined_pois && analysisData.refined_pois.length > 0) {
-                setPois(currentPOIs => {
+                const applyRefinement = (currentPOIs: POI[]) => {
                     return currentPOIs.map(poi => {
                         const refinement = analysisData.refined_pois.find(
                             (r: { name: string }) => r.name === poi.name
                         );
-
                         if (refinement) {
                             return {
                                 ...poi,
@@ -181,44 +188,41 @@ export default function HorizonMode({
                                 action: refinement.action || 'show'
                             };
                         }
-
                         return poi;
                     });
-                });
+                };
 
+                setPois(prev => applyRefinement(prev));
+                setGooglePois(prev => applyRefinement(prev));
                 setAiAnalyzed(true);
             }
 
         } catch (err) {
             console.error('Horizon analysis error:', err);
-            // Silently fail - markers will use default positioning
         }
-    }, [pois, latitude, longitude, heading, apiBaseUrl]);
+    }, [pois, googlePois, latitude, longitude, heading, apiBaseUrl]);
 
-    // Fetch POIs when location or category changes
+    // Fetch POIs when location changes
     useEffect(() => {
-        // Only fetch if we have valid coordinates (non-zero)
         if (latitude && longitude && (latitude !== 0 || longitude !== 0)) {
             fetchPOIs();
+            fetchGooglePOIs();
         }
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [latitude, longitude]);
+    }, [latitude, longitude, fetchPOIs, fetchGooglePOIs]);
 
     // 🚀 PERFORMANCE: Continuous throttled analysis
-    // Only triggers when heading changes >15° and >10s since last analysis
-    // Automatically pauses during rapid rotation
     useThrottledHorizonAnalysis(heading, analyzeHorizon, {
-        minHeadingChange: 15,    // Trigger after rotating 15°
-        minInterval: 10000,      // Max 1 analysis per 10 seconds
-        velocityThreshold: 2     // Pause if rotating faster than 2°/100ms
+        minHeadingChange: 15,
+        minInterval: 10000,
+        velocityThreshold: 2
     });
 
-    // Filter POIs to only show those within ±90° of current heading (frustum culling)
-    const visiblePOIs = pois.filter(poi => {
-        // Hide if Gemini said to hide
-        if (poi.action === 'hide') return false;
+    const combinedPois = [...pois, ...googlePois];
 
-        return isInFieldOfView(poi.bearing_degrees, heading, 180); // 180° = ±90° FOV
+    // Filter POIs to only show those within ±90° of current heading
+    const visiblePOIs = combinedPois.filter(poi => {
+        if (poi.action === 'hide') return false;
+        return isInFieldOfView(poi.bearing_degrees, heading, 180);
     });
 
     return (

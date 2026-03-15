@@ -127,6 +127,7 @@ def analyze_frame(request):
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
     
     data = serializer.validated_data
+    logger.info(f"Received frame for analysis: Lat={data['latitude']}, Lon={data['longitude']}, Heading={data['heading']}")
     
     # Extract metadata
     thought_signature = request.data.get('thought_signature')
@@ -272,6 +273,8 @@ def analyze_horizon(request):
     if missing_fields:
         return Response({"error": f"Missing: {', '.join(missing_fields)}"}, status=400)
     
+    logger.info(f"Received horizon analysis request: Lat={request.data.get('latitude')}, Lon={request.data.get('longitude')}")
+
     try:
         nav_service = get_navigation_service()
         result = nav_service.analyze_horizon(
@@ -398,6 +401,63 @@ def get_metrics(request):
     
     metrics = NavigationMetrics.get_metrics_summary()
     return JsonResponse(metrics)
+
+
+@api_view(['GET'])
+def get_nearby_poi(request):
+    """
+    Fetch nearby Points of Interest from Google Maps Places API.
+    Used for the Mini-Map HUD and Horizon Mode landmark labeling.
+    """
+    import urllib.request
+    import json
+    
+    lat = request.query_params.get('lat')
+    lon = request.query_params.get('lon')
+    radius = request.query_params.get('radius', 1000)
+    # Default types that make sense for a travel/AR app
+    poi_type = request.query_params.get('type', 'tourist_attraction|museum|park|point_of_interest')
+    
+    if not lat or not lon:
+        return Response({"error": "lat and lon are required"}, status=400)
+        
+    api_key = getattr(settings, 'GOOGLE_MAPS_API_KEY', None)
+    if not api_key:
+        logger.error("GOOGLE_MAPS_API_KEY not found in settings.")
+        return Response({"error": "Google Maps API key not configured on server"}, status=500)
+        
+    # Construct Google Places API URL (Nearby Search)
+    url = f"https://maps.googleapis.com/maps/api/place/nearbysearch/json?location={lat},{lon}&radius={radius}&type={poi_type}&key={api_key}"
+    
+    try:
+        with urllib.request.urlopen(url, timeout=10) as response:
+            data = json.load(response)
+            
+            status_code = data.get('status')
+            if status_code != 'OK' and status_code != 'ZERO_RESULTS':
+                error_msg = data.get('error_message', 'Unknown Google API error')
+                logger.error(f"Google Places API error: {status_code} - {error_msg}")
+                return Response({"error": f"Google API error: {status_code}"}, status=502)
+                
+            results = []
+            for item in data.get('results', []):
+                # Extract simplified data for the AR frontend
+                results.append({
+                    "id": item.get('place_id'),
+                    "name": item.get('name'),
+                    "lat": item['geometry']['location']['lat'],
+                    "lon": item['geometry']['location']['lng'],
+                    "category": item.get('types', ['point_of_interest'])[0],
+                    "rating": item.get('rating', 0),
+                    "address": item.get('vicinity', '')
+                })
+                
+            logger.info(f"Fetched {len(results)} POIs for ({lat}, {lon})")
+            return Response({"results": results})
+            
+    except Exception as e:
+        logger.error(f"Failed to fetch POIs from Google: {e}", exc_info=True)
+        return Response({"error": "Internal server error contacting Google Maps API"}, status=500)
 
 
 # === Helper Functions ===
